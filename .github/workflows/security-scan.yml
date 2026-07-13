@@ -1,0 +1,21 @@
+name: Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    name: OWASP Top 10 Scan
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run AI Security Scan
+        uses: ./.github/actions/security-scan
+        with:
+          api_url: ${{ secrets.SCANNER_API_URL }}
+          api_key: ${{ secrets.SCANNER_API_KEY }}
+          fail_on_severity: "8"
+          timeout_seconds: "300"

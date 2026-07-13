@@ -1,0 +1,116 @@
+name: "AI Security Scan"
+description: "Runs the AI Code Security Scanner on a PR and posts inline fix suggestions"
+
+inputs:
+  api_url:
+    description: "Base URL of the scanner API"
+    required: true
+  api_key:
+    description: "Scanner API JWT token"
+    required: true
+  repo:
+    description: "GitHub repo in owner/name format"
+    required: false
+    default: ${{ github.repository }}
+  pr_number:
+    description: "Pull request number"
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  fail_on_severity:
+    description: "Exit code 1 if any finding has severity >= this value (0 = never fail)"
+    required: false
+    default: "8"
+  timeout_seconds:
+    description: "Max seconds to wait for scan completion"
+    required: false
+    default: "300"
+
+outputs:
+  scan_id:
+    description: "ID of the scan that was run"
+    value: ${{ steps.create.outputs.scan_id }}
+  finding_count:
+    description: "Total number of findings"
+    value: ${{ steps.poll.outputs.finding_count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create scan
+      id: create
+      shell: bash
+      run: |
+        RESPONSE=$(curl -sf -X POST "${{ inputs.api_url }}/api/v1/scans" \
+          -H "Authorization: Bearer ${{ inputs.api_key }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "repo_url": "https://github.com/${{ inputs.repo }}",
+            "pr_number": ${{ inputs.pr_number }}
+          }')
+        SCAN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+        echo "scan_id=$SCAN_ID" >> $GITHUB_OUTPUT
+        echo "✅ Scan created: $SCAN_ID"
+
+    - name: Poll for completion
+      id: poll
+      shell: bash
+      run: |
+        SCAN_ID="${{ steps.create.outputs.scan_id }}"
+        TIMEOUT=${{ inputs.timeout_seconds }}
+        ELAPSED=0
+
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          RESULT=$(curl -sf "${{ inputs.api_url }}/api/v1/scans/$SCAN_ID" \
+            -H "Authorization: Bearer ${{ inputs.api_key }}")
+          STATUS=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+          echo "  Status: $STATUS (${ELAPSED}s elapsed)"
+
+          if [ "$STATUS" = "done" ]; then
+            COUNT=$(echo "$RESULT" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['findings']))")
+            MAX_SEV=$(echo "$RESULT" | python3 -c "
+        import sys, json
+        findings = json.load(sys.stdin)['findings']
+        print(max((f['severity'] for f in findings), default=0))
+        ")
+            echo "finding_count=$COUNT" >> $GITHUB_OUTPUT
+            echo "max_severity=$MAX_SEV" >> $GITHUB_OUTPUT
+            echo "✅ Scan complete — $COUNT findings, max severity $MAX_SEV"
+            break
+          elif [ "$STATUS" = "failed" ]; then
+            echo "❌ Scan failed"
+            exit 1
+          fi
+
+          sleep 5
+          ELAPSED=$((ELAPSED + 5))
+        done
+
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          echo "❌ Scan timed out after ${TIMEOUT}s"
+          exit 1
+        fi
+
+    - name: Check severity threshold
+      shell: bash
+      run: |
+        THRESHOLD="${{ inputs.fail_on_severity }}"
+        MAX_SEV="${{ steps.poll.outputs.max_severity }}"
+        COUNT="${{ steps.poll.outputs.finding_count }}"
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  AI Security Scan Results"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Total findings : $COUNT"
+        echo "  Max severity   : $MAX_SEV / 10"
+        echo "  Fail threshold : $THRESHOLD"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        if [ "$THRESHOLD" != "0" ] && [ "$MAX_SEV" -ge "$THRESHOLD" ]; then
+          echo ""
+          echo "❌ FAILED — severity $MAX_SEV >= threshold $THRESHOLD"
+          echo "   Review inline PR comments for fix suggestions."
+          exit 1
+        else
+          echo "✅ PASSED — no findings at or above severity threshold"
+        fi

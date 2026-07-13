@@ -1,0 +1,103 @@
+{
+  "title": "AI Code Scanner",
+  "uid": "scanner-main",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Scans per minute",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(scanner_scans_total[1m]) * 60",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Average scan duration (seconds)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(scanner_scan_duration_seconds_sum[5m]) / rate(scanner_scan_duration_seconds_count[5m])",
+          "legendFormat": "avg duration"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Findings by severity band",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(scanner_findings_total[5m])",
+          "legendFormat": "{{severity_band}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Groq API calls per minute",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(scanner_groq_api_calls_total[1m]) * 60",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Scan cache hit rate (%)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(scanner_cache_hits_total[5m]) / rate(scanner_scans_total[5m]) * 100"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "unit": "percent" }
+    },
+    {
+      "id": 6,
+      "title": "Active WebSocket connections",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "scanner_active_websocket_connections" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Groq API errors per minute",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(scanner_groq_api_errors_total[1m]) * 60"
+        }
+      ],
+      "options": { "colorMode": "background", "thresholds": { "steps": [{ "color": "green", "value": 0 }, { "color": "red", "value": 1 }] } }
+    },
+    {
+      "id": 8,
+      "title": "HTTP request rate (all routes)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total[1m]) * 60",
+          "legendFormat": "{{method}} {{handler}} {{status_code}}"
+        }
+      ]
+    }
+  ]
+}

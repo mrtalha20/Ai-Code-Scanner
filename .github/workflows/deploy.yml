@@ -1,0 +1,111 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/scanner-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/scanner-frontend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tag
+        id: meta
+        run: echo "sha_tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          target: production
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          target: production
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_WS_URL=${{ secrets.NEXT_PUBLIC_WS_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.29.0"
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Update image tags in manifests
+        run: |
+          SHA=${{ needs.build-and-push.outputs.sha_tag }}
+          sed -i "s|scanner-backend:latest|scanner-backend:${SHA}|g" k8s/backend/deployment.yaml
+          sed -i "s|scanner-frontend:latest|scanner-frontend:${SHA}|g" k8s/frontend/deployment.yaml
+
+      - name: Apply K8s manifests
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/postgres/statefulset.yaml
+          kubectl apply -f k8s/redis/deployment.yaml
+          kubectl apply -f k8s/backend/deployment.yaml
+          kubectl apply -f k8s/frontend/deployment.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Run migrations
+        run: |
+          kubectl rollout status deployment/scanner-backend --timeout=120s
+          BACKEND_POD=$(kubectl get pod -l app=scanner-backend -o jsonpath="{.items[0].metadata.name}")
+          kubectl exec $BACKEND_POD -- alembic upgrade head
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/scanner-backend --timeout=300s
+          kubectl rollout status deployment/scanner-frontend --timeout=300s
+
+      - name: Smoke test
+        run: |
+          INGRESS_IP=$(kubectl get ingress scanner-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          curl -sf "https://${{ secrets.DOMAIN }}/health" | grep '"status"' || exit 1
+          echo "✅ Health check passed"
