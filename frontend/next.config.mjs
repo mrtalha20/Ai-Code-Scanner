@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: "standalone",
   experimental: {
     typedRoutes: true,
   },
-  // Add this if needed
   serverRuntimeConfig: {
     // Only available on the server side
   },
