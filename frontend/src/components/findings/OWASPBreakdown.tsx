@@ -46,7 +46,10 @@ export default function OWASPBreakdown({ findings }: Props) {
           <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={80} />
           <Tooltip
-            formatter={(value: number) => [`${value} finding${value !== 1 ? "s" : ""}`, ""]}
+            formatter={(value: unknown) => {
+              if (typeof value !== 'number') return ["", ""];
+              return [`${value} finding${value !== 1 ? "s" : ""}`, ""];
+            }}
             contentStyle={{ fontSize: 12, borderRadius: 8 }}
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]}>
